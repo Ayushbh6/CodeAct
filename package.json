@@ -1,0 +1,77 @@
+{
+  "name": "codeact",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    
+    "docker:build": "docker build -t react-codeact-learning-bot .",
+    "docker:build-dev": "docker build -f Dockerfile.dev -t react-codeact-learning-bot:dev .",
+    "docker:run": "docker run -p 3000:3000 react-codeact-learning-bot",
+    "docker:run-dev": "docker run -p 3000:3000 -v $(pwd):/app react-codeact-learning-bot:dev",
+    "docker:up": "docker-compose up codeact-dev",
+    "docker:up-prod": "docker-compose --profile production up codeact-prod",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f codeact-dev",
+    "docker:clean": "docker system prune -f && docker volume prune -f"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.66",
+    "@langchain/openai": "^0.6.3",
+    "@radix-ui/react-slot": "^1.2.3",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dockerode": "^4.0.7",
+    "dotenv": "^17.2.1",
+    "framer-motion": "^12.23.11",
+    "langchain": "^0.3.30",
+    "lucide-react": "^0.532.0",
+    "next": "15.4.4",
+    "prism-react-renderer": "^2.4.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-markdown": "^10.1.0",
+    "tailwind-merge": "^3.3.1",
+    
+    "recharts": "^2.8.0",
+    "@xyflow/react": "^12.0.0",
+    "katex": "^0.16.9",
+    "react-katex": "^3.0.1",
+    "d3": "^7.8.5",
+    "victory": "^37.0.2",
+    "react-spring": "^9.7.3",
+    
+    "@tailwindcss/typography": "^0.5.13",
+    "@tailwindcss/forms": "^0.5.7",
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@radix-ui/react-slider": "^1.1.2",
+    "@radix-ui/react-select": "^2.0.0",
+    "@radix-ui/react-tooltip": "^1.0.7",
+    "@radix-ui/react-tabs": "^1.0.4",
+    "@radix-ui/react-switch": "^1.0.3",
+    "@headlessui/react": "^2.1.1",
+    
+    "react-hot-toast": "^2.4.1",
+    "sonner": "^1.5.0",
+    "@emotion/react": "^11.11.4",
+    "@emotion/styled": "^11.11.5",
+    "styled-components": "^6.1.11",
+    
+    "axios": "^1.7.2"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.4.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
