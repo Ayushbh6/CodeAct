@@ -12,6 +12,8 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static('public'));
+// Serve generated components
+app.use('/components/generated', express.static(path.join(__dirname, 'components', 'generated')));
 
 // Paths
 const COMPONENTS_DIR = path.join(__dirname, 'components', 'generated');
@@ -63,7 +65,19 @@ app.post('/execute-component', async (req, res) => {
     const htmlPath = path.join(COMPONENTS_DIR, `${executionId}.html`);
     const screenshotPath = path.join(SCREENSHOTS_DIR, `${executionId}.png`);
 
-    // Create React component file
+    // Preprocess the React code to remove import/export statements
+    let processedCode = reactCode;
+    
+    // Remove import statements
+    processedCode = processedCode.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, '');
+    processedCode = processedCode.replace(/import\s+['"].*?['"];?\s*/g, '');
+    processedCode = processedCode.replace(/import\s*{[^}]*}\s*from\s*['"][^'"]*['"];?\s*/g, '');
+    
+    // Remove export statements but keep the component
+    processedCode = processedCode.replace(/export\s+default\s+/g, '');
+    processedCode = processedCode.replace(/export\s+/g, '');
+
+    // Create React component file (original code for reference)
     await fs.writeFile(componentPath, reactCode);
 
     // Create HTML wrapper for the component
@@ -77,10 +91,13 @@ app.post('/execute-component', async (req, res) => {
   <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.8.0/esm/index.js" type="module"></script>
-  <script src="https://unpkg.com/framer-motion@11.2.10/dist/framer-motion.js"></script>
-  <script src="https://unpkg.com/lucide-react@0.394.0/dist/umd/lucide-react.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/prop-types@15/prop-types.js"></script>
+  <script src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
+  <script>
+    // Make Recharts components available globally
+    window.Recharts = window.Recharts || {};
+  </script>
   <style>
     body { 
       margin: 0; 
@@ -101,58 +118,43 @@ app.post('/execute-component', async (req, res) => {
   <div id="root"></div>
   
   <script type="text/babel">
-    ${reactCode}
+    // Import React hooks and components into global scope
+    const { useState, useEffect, useRef, useMemo, useCallback } = React;
+    const { motion } = window["framer-motion"] || {};
+    const { LineChart, Line, BarChart, Bar, PieChart, Pie, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } = window.Recharts || {};
+    const { TrendingUp, DollarSign, Calendar, Brain, Code, MessageSquare, Sparkles, ChevronDown, ChevronUp } = window.lucideReact || {};
+    
+    ${processedCode}
+    
+    // Component code is already processed and available
+    // Try to find the main component function
+    const componentMatch = \`${processedCode}\`.match(/(?:const|let|var|function)\\s+(\\w+)\\s*=\\s*(?:\\(|function)/);
+    const detectedComponentName = componentMatch ? componentMatch[1] : '${componentName}';
+    
+    // Try to find the component to render
+    const ComponentToRender = typeof window[detectedComponentName] !== 'undefined' ? window[detectedComponentName] :
+                             typeof ${componentName} !== 'undefined' ? ${componentName} : 
+                             typeof Component !== 'undefined' ? Component :
+                             typeof App !== 'undefined' ? App :
+                             (() => {
+                               console.error('Could not find component. Available globals:', Object.keys(window).filter(k => k[0] === k[0].toUpperCase()));
+                               return <div>No component found. Check console for details.</div>;
+                             });
     
     // Render the component
     const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(React.createElement(${componentName}));
+    root.render(React.createElement(ComponentToRender));
   </script>
 </body>
 </html>`;
 
     await fs.writeFile(htmlPath, htmlWrapper);
 
-    // Launch headless browser to render and screenshot
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    });
-
-    const page = await browser.newPage();
+    // Skip screenshot generation for now - focus on live component execution
+    console.log('✅ Component HTML generated successfully');
     
-    // Set viewport for consistent screenshots
-    await page.setViewport({ width: 1200, height: 800 });
-    
-    // Navigate to the HTML file
-    await page.goto(`file://${htmlPath}`, { 
-      waitUntil: 'networkidle0',
-      timeout: timeout 
-    });
-
-    // Wait a bit for animations to settle
-    await page.waitForTimeout(2000);
-
-    // Take screenshot
-    await page.screenshot({
-      path: screenshotPath,
-      fullPage: true,
-      type: 'png'
-    });
-
-    await browser.close();
-
-    // Get screenshot as base64 for immediate response
-    const screenshotBuffer = await fs.readFile(screenshotPath);
-    const screenshotBase64 = screenshotBuffer.toString('base64');
+    // Create a placeholder screenshot message
+    const screenshotBase64 = null;
 
     // Cleanup temporary files (optional - keep for debugging)
     // await fs.remove(componentPath);
@@ -164,15 +166,8 @@ app.post('/execute-component', async (req, res) => {
       executionId,
       componentName,
       componentType,
-      screenshot: {
-        url: `/screenshots/${executionId}.png`,
-        base64: `data:image/png;base64,${screenshotBase64}`,
-        path: screenshotPath
-      },
-      files: {
-        component: componentPath,
-        html: htmlPath
-      },
+      componentPath: `/components/generated/${executionId}.jsx`,
+      htmlPath: `/components/generated/${executionId}.html`,
       timestamp: new Date().toISOString(),
       message: `${componentType} component executed successfully! 🎉`
     });

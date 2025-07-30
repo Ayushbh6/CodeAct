@@ -80,7 +80,6 @@ CMD ["npm", "start"]
   "thought": "string - reasoning about what visual/interactive element to create",
   "action": "execute_react | debug_react | provide_answer",
   "react_code": "string - Complete React component code",
-  "component_type": "chart | diagram | animation | interactive | presentation",
   "final_answer": "string - explanation of the learning concept"
 }
 ```

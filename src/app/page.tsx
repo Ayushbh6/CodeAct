@@ -1,194 +1,839 @@
-'use client'
+'use client';
 
-import React, { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { TrendingUp, Calculator, BookOpen, Zap } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { ChevronDown, ChevronUp, Send, Brain, Code, MessageSquare, Sparkles } from 'lucide-react';
+import { extractPartialJsonFields } from './utils/parsePartialJson';
+import CodePanel from './components/CodePanel';
+import MarkdownRenderer from './components/MarkdownRenderer';
 
-export default function CodeActDemoPage() {
-  const [mounted, setMounted] = useState(false)
-  
+interface Message {
+  id: string;
+  type: 'user' | 'ai';
+  content: string;
+  thought?: string;
+  code?: string;
+  timestamp: Date;
+  conversationId?: string; // Track which conversation this belongs to
+}
+
+interface AIResponse {
+  thought: string;
+  action: 'execute_code' | 'debug_error' | 'provide_answer';
+  code?: string;
+  final_answer?: string;
+}
+
+interface ConversationState {
+  id: string;
+  turnCount: number;
+  maxTurns: number;
+  waitingForFinalPreview?: boolean;
+}
+
+// Validation function to ensure AI follows CodeAct pattern
+function validateAndCleanAIResponse(response: AIResponse): AIResponse {
+  // If action is execute_code or debug_error, remove any final_answer
+  if ((response.action === 'execute_code' || response.action === 'debug_error') && response.final_answer) {
+    console.warn('[CodeAct] WARNING: AI provided final_answer with action:', response.action, '- removing final_answer to enforce execution loop');
+    const { final_answer, ...cleanedResponse } = response;
+    return cleanedResponse as AIResponse;
+  }
+  return response;
+}
+
+export default function CodeActInterface() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: '1',
+      type: 'ai',
+      content: "Hello! I'm your CodeAct learning assistant. I can help you learn concepts through interactive visualizations or have normal conversations. What would you like to explore?",
+      timestamp: new Date()
+    }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [expandedThoughts, setExpandedThoughts] = useState<Set<string>>(new Set());
+  const [currentConversation, setCurrentConversation] = useState<ConversationState | null>(null);
+  const [awaitingPreviewResult, setAwaitingPreviewResult] = useState(false);
+  const [lastFeedbackTime, setLastFeedbackTime] = useState(0);
+  const [pendingFeedback, setPendingFeedback] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = (smooth = true) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ 
+        behavior: smooth ? 'smooth' : 'auto', 
+        block: 'end',
+        inline: 'nearest'
+      });
+    }
+  };
+
   useEffect(() => {
-    setMounted(true)
-  }, [])
+    // Smooth scroll when messages array changes (new message added)
+    scrollToBottom(true);
+  }, [messages.length]);
 
-  if (!mounted) return null
+  // Instant scroll during streaming to keep up with content
+  useEffect(() => {
+    if (isLoading) {
+      const scrollInterval = setInterval(() => {
+        scrollToBottom(false); // No smooth scrolling during streaming
+      }, 50); // More frequent updates during streaming
+
+      return () => clearInterval(scrollInterval);
+    }
+  }, [isLoading]);
+
+  // Process pending feedback when loading is done
+  useEffect(() => {
+    if (!isLoading && pendingFeedback && currentConversation) {
+      console.log('[CodeAct] Processing pending feedback now that loading is done');
+      const feedback = pendingFeedback;
+      setPendingFeedback(null);
+      // Small delay to ensure UI updates
+      setTimeout(() => {
+        submitFeedback(feedback);
+      }, 100);
+    }
+  }, [isLoading, pendingFeedback, currentConversation]);
+
+  const toggleThought = (messageId: string) => {
+    setExpandedThoughts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId);
+      } else {
+        newSet.add(messageId);
+      }
+      return newSet;
+    });
+  };
+
+  // Function to handle automatic feedback submission
+  const submitFeedback = async (feedbackMessage: string) => {
+    console.log('[CodeAct] Auto-submitting feedback:', feedbackMessage);
+    console.log('[CodeAct] Current conversation state:', currentConversation);
+    console.log('[CodeAct] Is loading:', isLoading);
+    
+    if (!currentConversation || isLoading) {
+      console.log('[CodeAct] Cannot submit feedback - no conversation or already loading');
+      return;
+    }
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: feedbackMessage,
+      timestamp: new Date(),
+      conversationId: currentConversation.id
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+    setAwaitingPreviewResult(false);
+
+    try {
+      console.log('[CodeAct] Sending feedback to AI, turn:', currentConversation.turnCount + 1);
+      
+      // Get conversation history
+      const conversationHistory = messages
+        .filter(msg => msg.conversationId === currentConversation.id)
+        .slice(-20)
+        .map(msg => {
+          if (msg.type === 'user') {
+            return { role: 'user', content: msg.content };
+          } else {
+            const aiContent = JSON.stringify({
+              thought: msg.thought || '',
+              action: msg.code ? 'execute_code' : 'provide_answer',
+              code: msg.code,
+              final_answer: msg.content
+            });
+            return { role: 'assistant', content: aiContent };
+          }
+        });
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message: feedbackMessage,
+          conversationHistory,
+          conversationTurn: currentConversation.turnCount + 1,
+          maxTurns: currentConversation.maxTurns
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get AI response');
+      }
+
+      // Process streaming response (same as handleSubmit)
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: '',
+        thought: '',
+        timestamp: new Date(),
+        conversationId: currentConversation.id
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+
+      // Handle streaming response
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let lastExtractedFields: { thought?: string; final_answer?: string; code?: string; action?: string } = {};
+
+      while (true) {
+        const { done, value } = await reader!.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') break;
+            
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices?.[0]?.delta?.content) {
+                const content = parsed.choices[0].delta.content;
+                fullContent += content;
+                
+                const extractedFields = extractPartialJsonFields(fullContent);
+                
+                let shouldUpdate = false;
+                const updates: Partial<Message> = {};
+                
+                if (extractedFields.thought && extractedFields.thought !== lastExtractedFields.thought) {
+                  updates.thought = extractedFields.thought;
+                  shouldUpdate = true;
+                  
+                  if (!expandedThoughts.has(aiMessage.id)) {
+                    setExpandedThoughts(prev => new Set([...prev, aiMessage.id]));
+                  }
+                }
+                
+                if (extractedFields.final_answer && extractedFields.final_answer !== lastExtractedFields.final_answer) {
+                  updates.content = extractedFields.final_answer;
+                  shouldUpdate = true;
+                }
+                
+                if (extractedFields.code && extractedFields.code !== lastExtractedFields.code) {
+                  updates.code = extractedFields.code;
+                  shouldUpdate = true;
+                  console.log('[CodeAct] AI generated new code in feedback response');
+                  // Set awaitingPreviewResult immediately when we see code
+                  setAwaitingPreviewResult(true);
+                  console.log('[CodeAct] Set awaitingPreviewResult to true immediately');
+                }
+                
+                if (shouldUpdate) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === aiMessage.id 
+                      ? { ...msg, ...updates }
+                      : msg
+                  ));
+                  lastExtractedFields = extractedFields;
+                  scrollToBottom(false);
+                }
+              }
+            } catch (e) {
+              // Skip malformed JSON chunks
+            }
+          }
+        }
+      }
+
+      // Parse final response
+      let aiResponse: AIResponse;
+      try {
+        aiResponse = JSON.parse(fullContent);
+        console.log('[CodeAct] AI response action:', aiResponse.action);
+        
+        // Validate and clean the response
+        aiResponse = validateAndCleanAIResponse(aiResponse);
+      } catch (error) {
+        console.error('[CodeAct] Failed to parse AI response:', fullContent);
+        aiResponse = {
+          thought: "I encountered an error processing your request.",
+          action: 'provide_answer' as const,
+          final_answer: "I'm sorry, I had trouble understanding your request. Please try again."
+        };
+      }
+
+      // Update conversation state
+      const updatedConversation = {
+        ...currentConversation,
+        turnCount: currentConversation.turnCount + 1
+      };
+
+      // Handle conversation state based on action type
+      if (aiResponse.action === 'execute_code' || aiResponse.action === 'debug_error') {
+        // For execute_code and debug_error, ALWAYS continue - must await execution result
+        console.log('[CodeAct] Code execution pending (', aiResponse.action, ') in feedback - must await result before ending');
+        setCurrentConversation(updatedConversation);
+        // awaitingPreviewResult is already set during streaming when code was detected
+        if (!aiResponse.code) {
+          console.error('[CodeAct] ERROR: Action is', aiResponse.action, 'but no code provided!');
+        }
+      } else if (aiResponse.action === 'provide_answer') {
+        console.log('[CodeAct] AI provided final answer in feedback');
+        
+        // If there's code, we need to wait for preview before truly ending
+        if (aiResponse.code) {
+          console.log('[CodeAct] AI provided final answer WITH code - keeping conversation alive for preview result');
+          // Keep conversation alive but mark that we're waiting for final preview
+          setCurrentConversation({
+            ...updatedConversation,
+            waitingForFinalPreview: true
+          });
+        } else {
+          console.log('[CodeAct] AI provided final answer without code, ending conversation');
+          setCurrentConversation(null);
+          setAwaitingPreviewResult(false);
+        }
+      } else {
+        // Fallback - continue conversation
+        console.log('[CodeAct] Unknown action in feedback, continuing conversation');
+        setCurrentConversation(updatedConversation);
+      }
+
+    } catch (error) {
+      console.error('[CodeAct] Error in feedback loop:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 2).toString(),
+        type: 'ai',
+        content: 'Sorry, I encountered an error. Please try again.',
+        timestamp: new Date(),
+        conversationId: currentConversation?.id
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      setCurrentConversation(null);
+      setAwaitingPreviewResult(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: input.trim(),
+      timestamp: new Date()
+    };
+
+    // Start a new conversation or continue existing one
+    let conversation = currentConversation;
+    if (!conversation || conversation.turnCount >= conversation.maxTurns) {
+      // Start fresh conversation
+      conversation = {
+        id: Date.now().toString(),
+        turnCount: 0,
+        maxTurns: 8
+      };
+      setCurrentConversation(conversation);
+    }
+
+    // Add conversation ID to user message
+    userMessage.conversationId = conversation.id;
+
+    setMessages(prev => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
+
+    try {
+      // Check if we've exceeded max turns
+      if (conversation.turnCount >= conversation.maxTurns) {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          type: 'ai',
+          content: 'Sorry, I reached the maximum number of attempts for this problem. Please try asking your question in a different way or start fresh.',
+          timestamp: new Date(),
+          conversationId: conversation.id
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setCurrentConversation(null); // Reset conversation
+        return;
+      }
+
+            // Get conversation history (last 20 messages max for current conversation = 10 Q&A pairs)
+      const conversationHistory = messages
+        .filter(msg => msg.conversationId === conversation.id)
+        .slice(-20) // Keep only last 20 messages (10 Q&A pairs)
+        .map(msg => {
+          if (msg.type === 'user') {
+            return { role: 'user', content: msg.content };
+          } else {
+            // For AI messages, we need to send the full JSON response format
+            const aiContent = JSON.stringify({
+              thought: msg.thought || '',
+              action: msg.code ? 'execute_code' : 'provide_answer',
+              code: msg.code,
+              final_answer: msg.content
+            });
+            return { role: 'assistant', content: aiContent };
+          }
+        });
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message: userMessage.content,
+          conversationHistory,
+          conversationTurn: conversation.turnCount + 1,
+          maxTurns: conversation.maxTurns
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get AI response');
+      }
+
+      // Create the AI message with empty content initially
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'ai',
+        content: '',
+        thought: '',
+        timestamp: new Date(),
+        conversationId: conversation.id
+      };
+
+      setMessages(prev => [...prev, aiMessage]);
+
+      // Handle streaming response
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let lastExtractedFields: { thought?: string; final_answer?: string; code?: string; action?: string } = {};
+
+      while (true) {
+        const { done, value } = await reader!.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') break;
+            
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.choices?.[0]?.delta?.content) {
+                const content = parsed.choices[0].delta.content;
+                fullContent += content;
+                
+                // Extract fields from partial JSON as they become available
+                const extractedFields = extractPartialJsonFields(fullContent);
+                
+                // Update the message progressively as fields become available
+                let shouldUpdate = false;
+                const updates: Partial<Message> = {};
+                
+                // Update thought if newly available or changed
+                if (extractedFields.thought && extractedFields.thought !== lastExtractedFields.thought) {
+                  updates.thought = extractedFields.thought;
+                  shouldUpdate = true;
+                  
+                  // Auto-expand the thought section when thought starts streaming
+                  if (!expandedThoughts.has(aiMessage.id)) {
+                    setExpandedThoughts(prev => new Set([...prev, aiMessage.id]));
+                  }
+                }
+                
+                // Update final_answer if newly available or changed
+                if (extractedFields.final_answer && extractedFields.final_answer !== lastExtractedFields.final_answer) {
+                  updates.content = extractedFields.final_answer;
+                  shouldUpdate = true;
+                }
+                
+                // Update code if newly available
+                if (extractedFields.code && extractedFields.code !== lastExtractedFields.code) {
+                  updates.code = extractedFields.code;
+                  shouldUpdate = true;
+                  console.log('[CodeAct] AI generated new code, will await preview result after streaming completes');
+                  // Set awaitingPreviewResult immediately when we see code
+                  setAwaitingPreviewResult(true);
+                  console.log('[CodeAct] Set awaitingPreviewResult to true immediately');
+                }
+                
+                // No need to track screenshot status anymore
+                
+                if (shouldUpdate) {
+                  setMessages(prev => prev.map(msg => 
+                    msg.id === aiMessage.id 
+                      ? { ...msg, ...updates }
+                      : msg
+                  ));
+                  lastExtractedFields = extractedFields;
+                  
+                  // Scroll to bottom when content updates during streaming
+                  scrollToBottom(false);
+                }
+              }
+            } catch (e) {
+              // Skip malformed JSON chunks
+            }
+          }
+        }
+      }
+
+      // Parse the final complete response
+      let aiResponse: AIResponse;
+      try {
+        aiResponse = JSON.parse(fullContent);
+        console.log('[CodeAct] AI response action:', aiResponse.action);
+        
+        // Validate and clean the response
+        aiResponse = validateAndCleanAIResponse(aiResponse);
+      } catch (error) {
+        console.error('[CodeAct] Failed to parse AI response:', fullContent);
+        aiResponse = {
+          thought: "I encountered an error processing your request.",
+          action: 'provide_answer' as const,
+          final_answer: "I'm sorry, I had trouble understanding your request. Please try again."
+        };
+      }
+
+      // Update conversation state
+      const updatedConversation = {
+        ...conversation,
+        turnCount: conversation.turnCount + 1
+      };
+
+      // Handle conversation state based on action type
+      if (aiResponse.action === 'execute_code' || aiResponse.action === 'debug_error') {
+        // For execute_code and debug_error, ALWAYS continue - must await execution result
+        console.log('[CodeAct] Code execution pending (', aiResponse.action, ') - must await result before ending');
+        setCurrentConversation(updatedConversation);
+        // awaitingPreviewResult is already set during streaming when code was detected
+        if (!aiResponse.code) {
+          console.error('[CodeAct] ERROR: Action is', aiResponse.action, 'but no code provided!');
+        }
+      } else if (aiResponse.action === 'provide_answer') {
+        console.log('[CodeAct] AI provided final answer');
+        
+        // If there's code, we need to wait for preview before truly ending
+        if (aiResponse.code) {
+          console.log('[CodeAct] AI provided final answer WITH code - keeping conversation alive for preview result');
+          // Keep conversation alive but mark that we're waiting for final preview
+          setCurrentConversation({
+            ...updatedConversation,
+            waitingForFinalPreview: true
+          });
+        } else {
+          console.log('[CodeAct] AI provided final answer without code, ending conversation');
+          setCurrentConversation(null);
+          setAwaitingPreviewResult(false);
+        }
+      } else {
+        // Fallback - continue conversation
+        console.log('[CodeAct] Unknown action, continuing conversation');
+        setCurrentConversation(updatedConversation);
+      }
+
+      // React code is now handled by LivePreview component directly
+      // No need for server-side execution anymore
+
+    } catch (error) {
+      console.error('Error:', error);
+      const errorMessage: Message = {
+        id: (Date.now() + 2).toString(),
+        type: 'ai',
+        content: 'Sorry, I encountered an error. Please try again.',
+        timestamp: new Date(),
+        conversationId: conversation?.id
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      setCurrentConversation(null); // Reset conversation on error
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      {/* Hero Section */}
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.8 }}
-        className="container mx-auto px-6 py-12"
-      >
-        <div className="text-center mb-16">
-          <motion.h1 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.8 }}
-            className="text-6xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-cyan-600 bg-clip-text text-transparent mb-6"
-          >
-            React CodeAct Learning Bot
-          </motion.h1>
-          
-          <motion.p 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.8 }}
-            className="text-xl text-gray-600 max-w-3xl mx-auto mb-8"
-          >
-            AI-powered educational assistant that generates live React components to create 
-            interactive learning experiences, visualizations, and beautiful presentations.
-          </motion.p>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.6, duration: 0.5 }}
-            className="flex gap-4 justify-center flex-wrap"
-          >
-            <motion.button
-              whileHover={{ scale: 1.05, boxShadow: "0 10px 30px rgba(59, 130, 246, 0.3)" }}
-              whileTap={{ scale: 0.95 }}
-              className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold shadow-lg transition-all duration-300"
-            >
-              Start Learning
-            </motion.button>
-            
-            <motion.button
-              whileHover={{ scale: 1.05, boxShadow: "0 10px 30px rgba(0, 0, 0, 0.1)" }}
-              whileTap={{ scale: 0.95 }}
-              className="px-8 py-4 bg-white text-gray-800 rounded-xl font-semibold shadow-lg border border-gray-200 transition-all duration-300"
-            >
-              View Examples
-            </motion.button>
-          </motion.div>
-        </div>
-
-        {/* Features Grid */}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex">
+      {/* Left Panel - Chat Interface */}
+      <div className="w-1/2 flex flex-col h-screen">
+        {/* Header */}
         <motion.div 
-          initial={{ opacity: 0, y: 40 }}
+          initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8, duration: 0.8 }}
-          className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mb-16"
+          className="bg-white/80 backdrop-blur-sm border-b border-gray-200 p-6"
         >
-          {[
-            {
-              icon: TrendingUp,
-              title: "Interactive Charts",
-              description: "Generate beautiful, animated data visualizations",
-              color: "from-blue-500 to-cyan-500"
-            },
-            {
-              icon: Calculator,
-              title: "Math Concepts",
-              description: "Visualize complex mathematical equations and formulas",
-              color: "from-purple-500 to-pink-500"
-            },
-            {
-              icon: BookOpen,
-              title: "Educational Content",
-              description: "Create engaging learning experiences and tutorials",
-              color: "from-green-500 to-emerald-500"
-            },
-            {
-              icon: Zap,
-              title: "Live Streaming",
-              description: "Hot reloading shows changes instantly",
-              color: "from-orange-500 to-yellow-500"
-            }
-          ].map((feature, index) => (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
+                <Brain className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                  CodeAct Agent
+                </h1>
+                <p className="text-gray-600 text-sm">Interactive Learning Assistant</p>
+              </div>
+            </div>
+            
+            {/* Turn Counter */}
+            {currentConversation && (
+              <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-medium">
+                Turn {currentConversation.turnCount + 1}/{currentConversation.maxTurns}
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {messages.map((message, index) => (
             <motion.div
-              key={feature.title}
+              key={message.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 1 + index * 0.1, duration: 0.6 }}
-              whileHover={{ y: -5, scale: 1.02 }}
-              className="bg-white rounded-2xl p-6 shadow-lg border border-gray-100 hover:shadow-xl transition-all duration-300"
+              transition={{ delay: index * 0.1 }}
+              className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${feature.color} flex items-center justify-center mb-4`}>
-                <feature.icon className="w-6 h-6 text-white" />
+              <div className={`max-w-[80%] ${message.type === 'user' ? 'order-2' : 'order-1'}`}>
+                {/* User Message */}
+                {message.type === 'user' && (
+                  <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-4 rounded-2xl rounded-tr-md shadow-lg">
+                    <p className="text-sm leading-relaxed">{message.content}</p>
+                    <p className="text-xs text-blue-100 mt-2" suppressHydrationWarning>
+                      {message.timestamp.toLocaleTimeString()}
+                    </p>
+                  </div>
+                )}
+
+                {/* AI Message */}
+                {message.type === 'ai' && (
+                  <div className="space-y-3">
+                    {/* Thought Process */}
+                    {message.thought && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden"
+                      >
+                        <button
+                          onClick={() => toggleThought(message.id)}
+                          className="w-full flex items-center justify-between p-3 text-left hover:bg-amber-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Brain className="w-4 h-4 text-amber-600" />
+                            <span className="text-sm font-medium text-amber-800">AI Thinking Process</span>
+                          </div>
+                          {expandedThoughts.has(message.id) ? 
+                            <ChevronUp className="w-4 h-4 text-amber-600" /> : 
+                            <ChevronDown className="w-4 h-4 text-amber-600" />
+                          }
+                        </button>
+                        {expandedThoughts.has(message.id) && (
+                          <div className="px-3 pb-3">
+                            <p className="text-sm text-amber-700 leading-relaxed">
+                              {message.thought}
+                            </p>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+
+                    {/* Main Response */}
+                    <div className="bg-white p-4 rounded-2xl rounded-tl-md shadow-lg border border-gray-100">
+                      <div className="flex items-start gap-3">
+                        <div className="w-8 h-8 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full flex items-center justify-center flex-shrink-0">
+                          <MessageSquare className="w-4 h-4 text-blue-600" />
+                        </div>
+                        <div className="flex-1">
+                          {message.content ? (
+                            <MarkdownRenderer content={message.content} />
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="animate-pulse flex gap-1">
+                                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                              </div>
+                              <span className="text-sm text-gray-500">AI is thinking...</span>
+                            </div>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2" suppressHydrationWarning>
+                            {message.timestamp.toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">{feature.title}</h3>
-              <p className="text-gray-600">{feature.description}</p>
             </motion.div>
           ))}
-        </motion.div>
 
-        {/* Status Dashboard */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.4, duration: 0.8 }}
-          className="bg-white rounded-2xl p-8 shadow-lg border border-gray-100"
-        >
-          <h2 className="text-2xl font-bold text-gray-900 mb-6 text-center">System Status</h2>
-          
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[
-              { label: "Docker Environment", status: "✅ Running", color: "text-green-600" },
-              { label: "Educational Libraries", status: "✅ Loaded", color: "text-green-600" },
-              { label: "AI Integration", status: "✅ Ready", color: "text-green-600" },
-              { label: "Hot Reloading", status: "✅ Active", color: "text-green-600" }
-            ].map((item, index) => (
-              <motion.div
-                key={item.label}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 1.6 + index * 0.1, duration: 0.5 }}
-                className="text-center"
-              >
-                <div className="text-sm text-gray-500 mb-1">{item.label}</div>
-                <div className={`font-semibold ${item.color}`}>{item.status}</div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Next Steps */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 1.8, duration: 0.8 }}
-          className="mt-16 text-center"
-        >
-          <h2 className="text-3xl font-bold text-gray-900 mb-6">What's Next?</h2>
-          <div className="max-w-4xl mx-auto grid md:grid-cols-3 gap-8">
-            {[
-              {
-                step: "1",
-                title: "AI Integration",
-                description: "Connect Qwen3 model for React component generation"
-              },
-              {
-                step: "2", 
-                title: "Component Templates",
-                description: "Create reusable templates for different learning types"
-              },
-              {
-                step: "3",
-                title: "Live Streaming",
-                description: "Implement real-time code compilation and preview"
-              }
-            ].map((step, index) => (
-              <motion.div
-                key={step.step}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 2 + index * 0.2, duration: 0.6 }}
-                className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-6"
-              >
-                <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-full flex items-center justify-center font-bold text-sm mb-4 mx-auto">
-                  {step.step}
+          {/* Loading indicator */}
+          {isLoading && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex justify-start"
+            >
+              <div className="bg-white p-4 rounded-2xl rounded-tl-md shadow-lg border border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-gradient-to-br from-blue-100 to-purple-100 rounded-full flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-blue-600 animate-pulse" />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{step.title}</h3>
-                <p className="text-gray-600 text-sm">{step.description}</p>
-              </motion.div>
-            ))}
-          </div>
+              </div>
+            </motion.div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input Form */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white/80 backdrop-blur-sm border-t border-gray-200 p-6"
+        >
+          <form onSubmit={handleSubmit} className="flex gap-3">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Ask me anything or request a visualization..."
+                className="w-full pl-4 pr-12 py-3 bg-white text-gray-900 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all placeholder-gray-500"
+                disabled={isLoading}
+              />
+              <motion.button
+                type="submit"
+                disabled={isLoading || !input.trim()}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg transition-all"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Send className="w-4 h-4" />
+              </motion.button>
+            </div>
+          </form>
         </motion.div>
-      </motion.div>
+      </div>
+
+      {/* Right Panel - Code Execution & Results */}
+      <div className="w-1/2 bg-gray-900 border-l border-gray-800 flex flex-col h-screen">
+        {(() => {
+          // Find the latest message with code
+          const latestCodeMessage = messages
+            .filter(msg => msg.type === 'ai' && msg.code)
+            .slice(-1)[0];
+
+          if (!latestCodeMessage || !latestCodeMessage.code) {
+            return (
+              <div className="flex-1 flex items-center justify-center text-gray-500">
+                <div className="text-center">
+                  <Code className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">No code executed yet</p>
+                  <p className="text-xs mt-1 opacity-75">Ask for a visualization or interactive component to see live results here</p>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <CodePanel 
+              key={latestCodeMessage.id} 
+              message={latestCodeMessage}
+              onPreviewResult={(result) => {
+                console.log('[CodeAct] Preview result received:', result);
+                console.log('[CodeAct] Current state - awaitingPreviewResult:', awaitingPreviewResult, 'isLoading:', isLoading);
+                
+                // Only process if we're expecting a preview result
+                if (!awaitingPreviewResult) {
+                  console.log('[CodeAct] WARNING: Ignoring preview result - not awaiting. This might be a timing issue!');
+                  console.log('[CodeAct] Current conversation:', currentConversation);
+                  return;
+                }
+                
+                // Check if this is for the most recent AI message
+                const isRecentMessage = latestCodeMessage.id === messages[messages.length - 1]?.id;
+                if (!isRecentMessage) {
+                  console.log('[CodeAct] Ignoring preview result - not from recent message');
+                  return;
+                }
+                
+                // Check if we have an active conversation that needs continuation
+                if (currentConversation) {
+                  // Check if this is a final preview (AI provided final_answer with code)
+                  if (currentConversation.waitingForFinalPreview) {
+                    console.log('[CodeAct] Preview result for final answer with code - conversation complete');
+                    setCurrentConversation(null);
+                    setAwaitingPreviewResult(false);
+                    // No need to submit feedback, the AI already provided its final answer
+                    return;
+                  }
+                  
+                  // Normal case: continue if we haven't reached max turns
+                  if (currentConversation.turnCount < currentConversation.maxTurns) {
+                    console.log('[CodeAct] Processing preview result for turn:', currentConversation.turnCount);
+                    
+                    // Prevent duplicate feedback submissions
+                    const now = Date.now();
+                    if (now - lastFeedbackTime < 3000) {
+                      console.log('[CodeAct] Skipping duplicate feedback - too soon after last submission');
+                      return;
+                    }
+                    setLastFeedbackTime(now);
+                    
+                    // Prepare feedback message in the expected format
+                    const feedbackMessage = result.success 
+                      ? `EXECUTION_RESULT: Success! The React component rendered successfully. The preview shows the working component with no errors.`
+                      : `EXECUTION_RESULT: Error - ${result.error}`;
+                    
+                    // Reset awaiting flag immediately to prevent duplicates
+                    setAwaitingPreviewResult(false);
+                    
+                    // Check if we can submit now or need to queue
+                    if (isLoading) {
+                      console.log('[CodeAct] Loading in progress, queueing feedback for later');
+                      setPendingFeedback(feedbackMessage);
+                    } else {
+                      // Auto-submit the feedback after a short delay
+                      setTimeout(() => {
+                        submitFeedback(feedbackMessage);
+                      }, 1500); // Give user time to see the result
+                    }
+                  } else {
+                    console.log('[CodeAct] Max turns reached');
+                    setCurrentConversation(null);
+                    setAwaitingPreviewResult(false);
+                  }
+                } else {
+                  console.log('[CodeAct] No active conversation');
+                  setAwaitingPreviewResult(false);
+                }
+              }}
+            />
+          );
+        })()}
+      </div>
     </div>
-  )
+  );
 }

@@ -18,17 +18,26 @@ const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
     messages: [
       {
         role: 'system',
-        content: `You are a helpful assistant that always responds in valid JSON format. Your response must be in the following JSON format:
+        content: `You are an educational AI learning assistant that generates interactive React components to help users learn concepts visually. You MUST always respond in valid JSON format using this EXACT schema:
+
 {
-  "thought": "your reasoning process about the problem",
-  "code": "executable Python code to solve the problem"
+  "thought": "string - reasoning about what visual/interactive element to create",
+  "action": "execute_react | debug_react | provide_answer",
+  "react_code": "string - Complete React component code",
+  "final_answer": "string - explanation of the learning concept"
 }
 
-Always respond with properly formatted JSON only.`
+RULES:
+- Use action "execute_react" when generating new React code
+- Use action "debug_react" when fixing previous code
+- Use action "provide_answer" when no more code is needed
+- react_code should be a complete, self-contained React component
+- Use professional styling with Tailwind CSS, Framer Motion, and educational libraries
+- Always respond with properly formatted JSON only.`
       },
       { 
         role: 'user', 
-        content: 'Calculate compound interest at 15k premium, 6% interest compounded semi annually for 6 years.'
+        content: 'Help me learn compound interest with an interactive visualization for 15k premium, 6% interest compounded semi annually for 6 years.'
       },
     ],
     stream: true,
@@ -39,14 +48,23 @@ Always respond with properly formatted JSON only.`
         properties: {
           thought: {
             type: 'string',
-            description: 'your thinking process'
+            description: 'reasoning about what visual/interactive element to create'
           },
-          code: {
+          action: {
             type: 'string',
-            description: 'python code to calculate this'
+            enum: ['execute_react', 'debug_react', 'provide_answer'],
+            description: 'the action to take'
+          },
+          react_code: {
+            type: 'string',
+            description: 'Complete React component code'
+          },
+          final_answer: {
+            type: 'string',
+            description: 'explanation of the learning concept'
           }
         },
-        required: ['thought', 'code'],
+        required: ['thought', 'action'],
         additionalProperties: false
       }
     },

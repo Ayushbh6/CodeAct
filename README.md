@@ -1,36 +1,125 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CodeAct Agent - Interactive Learning Assistant
 
-## Getting Started
+## 🎯 Overview
+CodeAct is an AI-powered learning assistant that helps users understand complex concepts through interactive React visualizations. It features real-time code preview, professional code editing with Monaco Editor, and support for educational libraries like Recharts, Framer Motion, and D3.
 
-First, run the development server:
+## ✨ Features
 
+- **Live React Preview**: Instant rendering of React components as AI generates code
+- **Monaco Editor Integration**: Professional code editing experience with syntax highlighting
+- **Multiple View Modes**: 
+  - Code view (read-only with syntax highlighting)
+  - Preview mode (live component rendering)
+  - Edit mode (modify code with instant preview updates)
+- **Educational Libraries**: Pre-loaded support for visualization libraries
+- **Streaming AI Responses**: See AI's thinking process and code generation in real-time
+- **Error Handling**: Graceful error boundaries with helpful error messages
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone [repository-url]
+cd codeact
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install --legacy-peer-deps
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Set up environment variables:
+```bash
+cp .env.example .env.local
+# Add your OpenAI API key to .env.local
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+4. Run the development server:
+```bash
+npm run dev
+```
 
-## Learn More
+5. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-To learn more about Next.js, take a look at the following resources:
+## 🏗️ Architecture
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Frontend Components
+- **`page.tsx`**: Main chat interface with AI conversation management
+- **`CodePanel.tsx`**: Code display and editing panel with Monaco Editor
+- **`LivePreview.tsx`**: Real-time React component rendering with Babel transpilation
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Key Technologies
+- **Next.js 15**: React framework with App Router
+- **Monaco Editor**: VS Code's editor for web
+- **Babel Standalone**: Client-side JavaScript transpilation
+- **Framer Motion**: Smooth animations and transitions
+- **Tailwind CSS**: Utility-first styling
 
-## Deploy on Vercel
+## 📚 Supported Libraries
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The following libraries are available in the live preview environment:
+- React 18
+- Recharts (charts and graphs)
+- Framer Motion (animations)
+- D3.js (data visualizations)
+- Victory (composable charts)
+- Lucide React (icons)
+- Tailwind CSS (styling)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🎨 Usage Examples
+
+Ask the AI to create:
+- "Create an interactive compound interest calculator"
+- "Show me how binary search works with animations"
+- "Build a visualization of sorting algorithms"
+- "Create an interactive physics simulation"
+
+## 🛠️ Development
+
+### Project Structure
+```
+codeact/
+├── src/
+│   ├── app/
+│   │   ├── api/          # API routes
+│   │   ├── components/   # React components
+│   │   └── page.tsx      # Main page
+│   └── types/           # TypeScript definitions
+├── public/              # Static assets
+└── package.json         # Dependencies
+```
+
+### Adding New Libraries
+To add support for new libraries in the preview:
+1. Add the CDN link in `LivePreview.tsx`
+2. Make the library available in the global scope
+3. Update the component detection logic if needed
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **Monaco Editor not loading**: Clear browser cache and reload
+2. **Preview not updating**: Check browser console for Babel errors
+3. **Libraries not available**: Ensure CDN links are accessible
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+Built with ❤️ for interactive learning
