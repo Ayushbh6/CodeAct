@@ -12,6 +12,7 @@ interface Message {
   type: 'user' | 'ai';
   content: string;
   thought?: string;
+  action?: 'execute_code' | 'debug_error' | 'provide_answer';
   code?: string;
   timestamp: Date;
   conversationId?: string; // Track which conversation this belongs to
@@ -29,6 +30,19 @@ interface ConversationState {
   turnCount: number;
   maxTurns: number;
   waitingForFinalPreview?: boolean;
+}
+
+// Function to clean markdown formatting from JSON response
+function cleanMarkdownFromJSON(content: string): string {
+  // Remove markdown code block formatting
+  return content
+    .replace(/^```json\s*/i, '')  // Remove opening ```json
+    .replace(/^```\s*/i, '')      // Remove opening ```  
+    .replace(/\s*```\s*$/i, '')   // Remove closing ```
+    .replace(/^"json\s*/i, '')    // Remove "json prefix
+    .replace(/^""json\s*/i, '')   // Remove ""json prefix
+    .replace(/"\s*$/i, '')        // Remove trailing "
+    .trim();
 }
 
 // Validation function to ensure AI follows CodeAct pattern
@@ -60,27 +74,42 @@ export default function CodeActInterface() {
   const [pendingFeedback, setPendingFeedback] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = (smooth = true) => {
+  const scrollToBottom = (smooth = true, force = false) => {
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ 
-        behavior: smooth ? 'smooth' : 'auto', 
-        block: 'end',
-        inline: 'nearest'
-      });
+      const messagesContainer = messagesEndRef.current.parentElement;
+      if (!messagesContainer || force) {
+        messagesEndRef.current.scrollIntoView({ 
+          behavior: smooth ? 'smooth' : 'auto', 
+          block: 'end',
+          inline: 'nearest'
+        });
+        return;
+      }
+
+      // Check if user is already near the bottom (within 100px)
+      const isNearBottom = messagesContainer.scrollHeight - messagesContainer.scrollTop - messagesContainer.clientHeight < 100;
+      
+      if (isNearBottom) {
+        messagesEndRef.current.scrollIntoView({ 
+          behavior: smooth ? 'smooth' : 'auto', 
+          block: 'end',
+          inline: 'nearest'
+        });
+      }
     }
   };
 
   useEffect(() => {
-    // Smooth scroll when messages array changes (new message added)
-    scrollToBottom(true);
+    // Only scroll when a new message is added, with smooth scroll
+    scrollToBottom(true, true);
   }, [messages.length]);
 
-  // Instant scroll during streaming to keep up with content
+  // Reduced frequency scroll during streaming, respecting user scroll position
   useEffect(() => {
     if (isLoading) {
       const scrollInterval = setInterval(() => {
-        scrollToBottom(false); // No smooth scrolling during streaming
-      }, 50); // More frequent updates during streaming
+        scrollToBottom(false, false); // Don't force scroll during streaming
+      }, 200); // Much less frequent updates
 
       return () => clearInterval(scrollInterval);
     }
@@ -122,15 +151,28 @@ export default function CodeActInterface() {
       return;
     }
 
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      type: 'user',
-      content: feedbackMessage,
-      timestamp: new Date(),
-      conversationId: currentConversation.id
-    };
+    // Instead of creating a new user message, append the execution result to the last AI message
+    setMessages(prev => {
+      const lastAIMessageIndex = prev.findLastIndex(msg => msg.type === 'ai' && msg.conversationId === currentConversation.id);
+      if (lastAIMessageIndex === -1) {
+        console.error('[CodeAct] No AI message found to append execution result to');
+        return prev;
+      }
+      
+      const updatedMessages = [...prev];
+      const lastAIMessage = updatedMessages[lastAIMessageIndex];
+      
+      // Append the execution result to the content
+      updatedMessages[lastAIMessageIndex] = {
+        ...lastAIMessage,
+        content: lastAIMessage.content 
+          ? `${lastAIMessage.content}\n\n${feedbackMessage}` 
+          : feedbackMessage
+      };
+      
+      return updatedMessages;
+    });
 
-    setMessages(prev => [...prev, userMessage]);
     setIsLoading(true);
     setAwaitingPreviewResult(false);
 
@@ -145,21 +187,37 @@ export default function CodeActInterface() {
           if (msg.type === 'user') {
             return { role: 'user', content: msg.content };
           } else {
-            const aiContent = JSON.stringify({
-              thought: msg.thought || '',
-              action: msg.code ? 'execute_code' : 'provide_answer',
-              code: msg.code,
-              final_answer: msg.content
-            });
-            return { role: 'assistant', content: aiContent };
+            // For AI messages, format all components as a structured string
+            let aiContent = '';
+            if (msg.thought) {
+              aiContent += `THOUGHT: ${msg.thought}\n\n`;
+            }
+            if (msg.action) {
+              aiContent += `ACTION: ${msg.action}\n\n`;
+            }
+            if (msg.code) {
+              aiContent += `CODE:\n${msg.code}\n\n`;
+            }
+            if (msg.content) {
+              // Check if content is the final_answer
+              if (msg.action === 'provide_answer') {
+                aiContent += `FINAL_ANSWER: ${msg.content}`;
+              } else {
+                aiContent += `CONTENT: ${msg.content}`;
+              }
+            }
+            return { role: 'assistant', content: aiContent.trim() };
           }
         });
+      
+      console.log('[CodeAct] Conversation history being sent:', JSON.stringify(conversationHistory, null, 2));
 
+      // Send the execution result directly as the message
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          message: feedbackMessage,
+          message: feedbackMessage, // Send the EXECUTION_RESULT directly
           conversationHistory,
           conversationTurn: currentConversation.turnCount + 1,
           maxTurns: currentConversation.maxTurns
@@ -234,6 +292,11 @@ export default function CodeActInterface() {
                   console.log('[CodeAct] Set awaitingPreviewResult to true immediately');
                 }
                 
+                if (extractedFields.action && extractedFields.action !== lastExtractedFields.action) {
+                  updates.action = extractedFields.action as 'execute_code' | 'debug_error' | 'provide_answer';
+                  shouldUpdate = true;
+                }
+                
                 if (shouldUpdate) {
                   setMessages(prev => prev.map(msg => 
                     msg.id === aiMessage.id 
@@ -241,7 +304,7 @@ export default function CodeActInterface() {
                       : msg
                   ));
                   lastExtractedFields = extractedFields;
-                  scrollToBottom(false);
+                  scrollToBottom(false, false);
                 }
               }
             } catch (e) {
@@ -254,7 +317,8 @@ export default function CodeActInterface() {
       // Parse final response
       let aiResponse: AIResponse;
       try {
-        aiResponse = JSON.parse(fullContent);
+        const cleanedContent = cleanMarkdownFromJSON(fullContent);
+        aiResponse = JSON.parse(cleanedContent);
         console.log('[CodeAct] AI response action:', aiResponse.action);
         
         // Validate and clean the response
@@ -295,8 +359,9 @@ export default function CodeActInterface() {
             waitingForFinalPreview: true
           });
         } else {
-          console.log('[CodeAct] AI provided final answer without code, ending conversation');
-          setCurrentConversation(null);
+          console.log('[CodeAct] AI provided final answer without code, keeping conversation alive');
+          // Keep the conversation alive so history is maintained
+          setCurrentConversation(updatedConversation);
           setAwaitingPreviewResult(false);
         }
       } else {
@@ -375,16 +440,38 @@ export default function CodeActInterface() {
           if (msg.type === 'user') {
             return { role: 'user', content: msg.content };
           } else {
-            // For AI messages, we need to send the full JSON response format
-            const aiContent = JSON.stringify({
-              thought: msg.thought || '',
-              action: msg.code ? 'execute_code' : 'provide_answer',
-              code: msg.code,
-              final_answer: msg.content
-            });
-            return { role: 'assistant', content: aiContent };
+            // For AI messages, format all components as a structured string
+            let aiContent = '';
+            if (msg.thought) {
+              aiContent += `THOUGHT: ${msg.thought}\n\n`;
+            }
+            if (msg.action) {
+              aiContent += `ACTION: ${msg.action}\n\n`;
+            }
+            if (msg.code) {
+              aiContent += `CODE:\n${msg.code}\n\n`;
+            }
+            if (msg.content) {
+              // Check if content is the final_answer
+              if (msg.action === 'provide_answer') {
+                aiContent += `FINAL_ANSWER: ${msg.content}`;
+              } else {
+                aiContent += `CONTENT: ${msg.content}`;
+              }
+            }
+            return { role: 'assistant', content: aiContent.trim() };
           }
         });
+
+      // DEBUG: Log conversation history details
+      const userMessagesCount = conversationHistory.filter(msg => msg.role === 'user').length;
+      const aiMessagesCount = conversationHistory.filter(msg => msg.role === 'assistant').length;
+      console.log('[CodeAct DEBUG] Conversation history stats:');
+      console.log(`  - Total messages in history: ${conversationHistory.length}`);
+      console.log(`  - User messages: ${userMessagesCount}`);
+      console.log(`  - AI messages: ${aiMessagesCount}`);
+      console.log(`  - Q&A pairs: ${Math.min(userMessagesCount, aiMessagesCount)}`);
+      console.log('[CodeAct DEBUG] Full conversation history:', JSON.stringify(conversationHistory, null, 2));
 
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -471,6 +558,12 @@ export default function CodeActInterface() {
                   console.log('[CodeAct] Set awaitingPreviewResult to true immediately');
                 }
                 
+                // Update action if newly available
+                if (extractedFields.action && extractedFields.action !== lastExtractedFields.action) {
+                  updates.action = extractedFields.action as 'execute_code' | 'debug_error' | 'provide_answer';
+                  shouldUpdate = true;
+                }
+                
                 // No need to track screenshot status anymore
                 
                 if (shouldUpdate) {
@@ -482,7 +575,7 @@ export default function CodeActInterface() {
                   lastExtractedFields = extractedFields;
                   
                   // Scroll to bottom when content updates during streaming
-                  scrollToBottom(false);
+                  scrollToBottom(false, false);
                 }
               }
             } catch (e) {
@@ -495,7 +588,8 @@ export default function CodeActInterface() {
       // Parse the final complete response
       let aiResponse: AIResponse;
       try {
-        aiResponse = JSON.parse(fullContent);
+        const cleanedContent = cleanMarkdownFromJSON(fullContent);
+        aiResponse = JSON.parse(cleanedContent);
         console.log('[CodeAct] AI response action:', aiResponse.action);
         
         // Validate and clean the response
@@ -536,8 +630,9 @@ export default function CodeActInterface() {
             waitingForFinalPreview: true
           });
         } else {
-          console.log('[CodeAct] AI provided final answer without code, ending conversation');
-          setCurrentConversation(null);
+          console.log('[CodeAct] AI provided final answer without code, keeping conversation alive');
+          // Keep the conversation alive so history is maintained
+          setCurrentConversation(updatedConversation);
           setAwaitingPreviewResult(false);
         }
       } else {
