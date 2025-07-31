@@ -37,7 +37,7 @@ npm install --legacy-peer-deps
 3. Set up environment variables:
 ```bash
 cp .env.example .env.local
-# Add your OpenAI API key to .env.local
+# Add your API keys to .env.local
 ```
 
 4. Run the development server:
@@ -46,6 +46,20 @@ npm run dev
 ```
 
 5. Open [http://localhost:3000](http://localhost:3000) in your browser
+
+## 🚀 Deployment
+
+### Railway Deployment
+This app is configured for easy Railway deployment:
+
+1. Connect your GitHub repository to Railway
+2. Set environment variables in Railway dashboard:
+   - `OPENROUTER_API_KEY`
+   - `TAVILY_API_KEY` 
+   - `GOOGLE_API_KEY`
+   - `GEMINI_API_KEY`
+   - `GITHUB_API_KEY`
+3. Railway will automatically build and deploy using `railway.json` configuration
 
 ## 🏗️ Architecture
 

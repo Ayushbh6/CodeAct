@@ -322,7 +322,7 @@ export default function LivePreview({ code, className = '', onPreviewResult }: L
         if (onPreviewResult) {
           setTimeout(() => {
             // Check if the component actually rendered by looking for the success flag
-            const iframeWindow = iframe.contentWindow as any;
+            const iframeWindow = iframe.contentWindow as Window & { __PREVIEW_SUCCESS__?: boolean; __COMPONENT_SELF_RENDERED__?: boolean };
             const actuallyRendered = iframeWindow?.__PREVIEW_SUCCESS__ === true;
             const selfRendered = iframeWindow?.__COMPONENT_SELF_RENDERED__ === true;
             

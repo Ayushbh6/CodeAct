@@ -5,7 +5,7 @@ export function extractPartialJsonFields(partialJson: string): {
   code?: string;
   final_answer?: string;
 } {
-  const result: any = {};
+  const result: Record<string, unknown> = {};
   
   // Helper to unescape JSON string values
   const unescapeJsonString = (str: string): string => {

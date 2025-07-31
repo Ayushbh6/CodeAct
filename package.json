@@ -7,16 +7,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "docker:build": "docker build -t react-codeact-learning-bot .",
-    "docker:build-dev": "docker build -f Dockerfile.dev -t react-codeact-learning-bot:dev .",
-    "docker:run": "docker run -p 3000:3000 react-codeact-learning-bot",
-    "docker:run-dev": "docker run -p 3000:3000 -v $(pwd):/app react-codeact-learning-bot:dev",
-    "docker:up": "docker-compose up codeact-dev",
-    "docker:up-prod": "docker-compose --profile production up codeact-prod",
-    "docker:down": "docker-compose down",
-    "docker:logs": "docker-compose logs -f codeact-dev",
-    "docker:clean": "docker system prune -f && docker volume prune -f"
+    "lint": "next lint"
   },
   "dependencies": {
     "@babel/standalone": "^7.28.1",
@@ -40,7 +31,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "d3": "^7.8.5",
-    "dockerode": "^4.0.7",
     "dotenv": "^17.2.1",
     "framer-motion": "^12.23.11",
     "katex": "^0.16.9",
