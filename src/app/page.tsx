@@ -604,9 +604,10 @@ export default function CodeActInterface() {
       }
 
       // Update conversation state
+      // Don't increment turnCount for regular user messages
+      // Only increment it during internal agent iterations (in submitFeedback)
       const updatedConversation = {
-        ...conversation,
-        turnCount: conversation.turnCount + 1
+        ...conversation
       };
 
       // Handle conversation state based on action type
@@ -683,12 +684,6 @@ export default function CodeActInterface() {
               </div>
             </div>
             
-            {/* Turn Counter */}
-            {currentConversation && (
-              <div className="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-xs font-medium">
-                Turn {currentConversation.turnCount + 1}/{currentConversation.maxTurns}
-              </div>
-            )}
           </div>
         </motion.div>
 
