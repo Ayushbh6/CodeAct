@@ -72,7 +72,28 @@ export default function CodeActInterface() {
   const [awaitingPreviewResult, setAwaitingPreviewResult] = useState(false);
   const [lastFeedbackTime, setLastFeedbackTime] = useState(0);
   const [pendingFeedback, setPendingFeedback] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<'chat' | 'code'>('chat'); // Mobile view state
+  const [codeInitStatus, setCodeInitStatus] = useState<{
+    isCodeReady: boolean;
+    isPreviewReady: boolean;
+  }>({ isCodeReady: false, isPreviewReady: false });
+  const [actuallyReady, setActuallyReady] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Add 20-second delay after components report ready
+  useEffect(() => {
+    if (codeInitStatus.isCodeReady && codeInitStatus.isPreviewReady) {
+      console.log('[CodeAct] Components report ready, starting 20-second safety delay...');
+      const timer = setTimeout(() => {
+        console.log('[CodeAct] 20-second safety delay complete, Code tab now fully ready');
+        setActuallyReady(true);
+      }, 20000); // 20 second delay for safety
+      
+      return () => clearTimeout(timer);
+    } else {
+      setActuallyReady(false);
+    }
+  }, [codeInitStatus]);
 
   const scrollToBottom = (smooth = true, force = false) => {
     if (messagesEndRef.current) {
@@ -662,9 +683,16 @@ export default function CodeActInterface() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex flex-col md:flex-row relative">
       {/* Left Panel - Chat Interface */}
-      <div className="w-1/2 flex flex-col h-screen">
+      <div className={`
+        ${activeView === 'chat' 
+          ? 'flex opacity-100 z-10' 
+          : 'opacity-0 pointer-events-none absolute -translate-x-full'
+        } 
+        md:opacity-100 md:pointer-events-auto md:relative md:translate-x-0
+        md:flex w-full md:w-1/2 flex-col h-screen transition-all duration-200
+      `}>
         {/* Header */}
         <motion.div 
           initial={{ opacity: 0, y: -20 }}
@@ -801,7 +829,7 @@ export default function CodeActInterface() {
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white/80 backdrop-blur-sm border-t border-gray-200 p-6"
+          className="bg-white/80 backdrop-blur-sm border-t border-gray-200 p-4 md:p-6 pb-20 md:pb-6"
         >
           <form onSubmit={handleSubmit} className="flex gap-3">
             <div className="flex-1 relative">
@@ -828,7 +856,14 @@ export default function CodeActInterface() {
       </div>
 
       {/* Right Panel - Code Execution & Results */}
-      <div className="w-1/2 bg-gray-900 border-l border-gray-800 flex flex-col h-screen">
+      <div className={`
+        ${activeView === 'code' 
+          ? 'flex opacity-100 z-10' 
+          : 'opacity-0 pointer-events-none absolute translate-x-full'
+        } 
+        md:opacity-100 md:pointer-events-auto md:relative md:translate-x-0
+        md:flex w-full md:w-1/2 bg-gray-900 md:border-l border-gray-800 flex-col h-screen transition-all duration-200
+      `}>
         {(() => {
           // Find the latest message with code
           const latestCodeMessage = messages
@@ -851,6 +886,7 @@ export default function CodeActInterface() {
             <CodePanel 
               key={latestCodeMessage.id} 
               message={latestCodeMessage}
+              onInitializationChange={setCodeInitStatus}
               onPreviewResult={(result) => {
                 console.log('[CodeAct] Preview result received:', result);
                 console.log('[CodeAct] Current state - awaitingPreviewResult:', awaitingPreviewResult, 'isLoading:', isLoading);
@@ -923,6 +959,60 @@ export default function CodeActInterface() {
             />
           );
         })()}
+      </div>
+
+      {/* Mobile Navigation Bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50">
+        <div className="flex h-16">
+          <button
+            onClick={() => setActiveView('chat')}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors relative ${
+              activeView === 'chat' 
+                ? 'text-blue-600 bg-blue-50' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="text-xs font-medium">Chat</span>
+          </button>
+          <button
+            onClick={() => {
+              // Only switch if components are actually ready (including safety delay) or no code is generated yet
+              const hasCode = messages.some(msg => msg.type === 'ai' && msg.code);
+              if (!hasCode || actuallyReady) {
+                setActiveView('code');
+              }
+            }}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors relative ${
+              activeView === 'code' 
+                ? 'text-blue-600 bg-blue-50' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+            disabled={messages.some(msg => msg.type === 'ai' && msg.code) && !actuallyReady}
+          >
+            {/* Show loading state when components are initializing */}
+            {messages.some(msg => msg.type === 'ai' && msg.code) && !actuallyReady ? (
+              <>
+                <div className="relative">
+                  <Code className="w-5 h-5 opacity-50" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="animate-spin w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full" />
+                  </div>
+                </div>
+                <span className="text-xs font-medium">Preparing...</span>
+              </>
+            ) : (
+              <>
+                <Code className="w-5 h-5" />
+                <span className="text-xs font-medium">Code</span>
+                {/* Show indicator when code is available and ready */}
+                {messages.some(msg => msg.type === 'ai' && msg.code) && activeView !== 'code' && actuallyReady && (
+                  <div className="absolute top-2 right-2 w-2 h-2 bg-green-600 rounded-full" />
+                )}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );

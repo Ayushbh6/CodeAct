@@ -11,7 +11,7 @@ react-executor/node_modules
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+# .vscode/  # Commented out to allow MCP settings
 # testing
 /coverage
 
@@ -41,3 +41,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.mcp.json
+docs/

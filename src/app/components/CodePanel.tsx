@@ -21,13 +21,16 @@ interface Message {
 interface CodePanelProps {
   message: Message;
   onPreviewResult?: (result: { success: boolean; error?: string }) => void;
+  onInitializationChange?: (status: { isCodeReady: boolean; isPreviewReady: boolean }) => void;
 }
 
-export default function CodePanel({ message, onPreviewResult }: CodePanelProps) {
+export default function CodePanel({ message, onPreviewResult, onInitializationChange }: CodePanelProps) {
   const [activeTab, setActiveTab] = useState<'code' | 'preview' | 'edit'>('code');
   const [copied, setCopied] = useState(false);
   const [editableCode, setEditableCode] = useState(message.code || '');
   const [isEditing, setIsEditing] = useState(false);
+  const [isCodeReady, setIsCodeReady] = useState(false);
+  const [isPreviewReady, setIsPreviewReady] = useState(false);
 
   // Auto-switch to preview only once when code first becomes available
   useEffect(() => {
@@ -44,6 +47,13 @@ export default function CodePanel({ message, onPreviewResult }: CodePanelProps) 
   useEffect(() => {
     setEditableCode(message.code || '');
   }, [message.code]);
+
+  // Notify parent of initialization status changes
+  useEffect(() => {
+    if (onInitializationChange) {
+      onInitializationChange({ isCodeReady, isPreviewReady });
+    }
+  }, [isCodeReady, isPreviewReady, onInitializationChange]);
 
   const copyToClipboard = () => {
     const codeToCopy = isEditing ? editableCode : message.code;
@@ -142,7 +152,7 @@ export default function CodePanel({ message, onPreviewResult }: CodePanelProps) 
       </div>
 
       {/* Content Area with Sliding Animation */}
-      <div className="flex-1 overflow-hidden relative bg-gray-900">
+      <div className="flex-1 overflow-auto relative bg-gray-900">
         <AnimatePresence mode="wait">
           {activeTab === 'code' ? (
             <motion.div
@@ -159,6 +169,10 @@ export default function CodePanel({ message, onPreviewResult }: CodePanelProps) 
                 defaultValue={message.code || ''}
                 value={message.code}
                 theme="vs-dark"
+                onMount={() => {
+                  console.log('Monaco Editor mounted and ready');
+                  setIsCodeReady(true);
+                }}
                 options={{
                   readOnly: true,
                   minimap: { enabled: false },
@@ -181,7 +195,12 @@ export default function CodePanel({ message, onPreviewResult }: CodePanelProps) 
             >
               <LivePreview 
                 code={editableCode || message.code || ''} 
-                onPreviewResult={onPreviewResult}
+                onPreviewResult={(result) => {
+                  setIsPreviewReady(true);
+                  if (onPreviewResult) {
+                    onPreviewResult(result);
+                  }
+                }}
               />
             </motion.div>
           ) : (
@@ -199,6 +218,10 @@ export default function CodePanel({ message, onPreviewResult }: CodePanelProps) 
                 value={editableCode}
                 theme="vs-dark"
                 onChange={(value) => setEditableCode(value || '')}
+                onMount={() => {
+                  console.log('Monaco Editor (edit mode) mounted and ready');
+                  setIsCodeReady(true);
+                }}
                 options={{
                   minimap: { enabled: false },
                   fontSize: 14,
